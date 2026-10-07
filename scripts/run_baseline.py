@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""No-RAG baseline: one image/question at a time, with auditable run artifacts."""
+"""Shared Batch 1/2 runner: no-RAG or cached Top-1 evidence, one sample at a time."""
 import argparse
 import json
 from pathlib import Path
@@ -12,6 +12,9 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 from icmr2027.config import load_config, resolve_path
 from icmr2027.datasets.base import create_dataset
 from icmr2027.evaluation.metrics import evaluate_predictions, exact_match
+from icmr2027.evaluation.ravenea import evaluate_cvqa
+from icmr2027.datasets.ravenea import format_cvqa_question
+from icmr2027.experiments import prepare_cvqa_run, cvqa_context, cvqa_prediction
 from icmr2027.models.vlm import HuggingFaceVLM
 from icmr2027.utils.io import create_run_directory, read_jsonl, write_json, write_jsonl, write_yaml
 from icmr2027.utils.reproducibility import set_seed
@@ -32,11 +35,12 @@ def run_baseline(config_path: Path, repo_root: Path = REPO_ROOT) -> Path:
         "dataset_name": config.dataset.name,
         "dataset_split": config.dataset.split,
         "infrastructure_only": config.dataset.name == "smoke",
-        "context": None,
+        "context": None if config.rag.mode == "none" else "cached_top1",
+        "rag_mode": config.rag.mode,
         "status": "running",
         "requested_model_revision": config.model.revision,
         "package_versions": {name: package_version(name)
-                             for name in ("accelerate", "pillow", "pyyaml", "numpy")},
+                             for name in ("accelerate", "pillow", "pyyaml", "numpy", "huggingface_hub")},
     })
     write_json(run_dir / "run_meta.json", metadata)
     write_jsonl(run_dir / "predictions.jsonl", [])
@@ -48,12 +52,24 @@ def run_baseline(config_path: Path, repo_root: Path = REPO_ROOT) -> Path:
         dataset = create_dataset(config.dataset, repo_root)
         if config.dataset.name == "smoke":
             print(SMOKE_NOTICE, flush=True)
+        corpus, cache = None, {}
+        if config.dataset.name == "ravenea_cvqa":
+            details, corpus, cache = prepare_cvqa_run(config, dataset, repo_root)
+            metadata.update(details)
+            write_json(run_dir / "run_meta.json", metadata)
         model = HuggingFaceVLM(config.model)
         metadata["resolved_model_revision"] = getattr(model, "resolved_revision", None)
+        if config.dataset.name == "ravenea_cvqa" and metadata["resolved_model_revision"] not in {None, config.model.revision}:
+            raise ValueError("Loaded VLM revision differs from the pinned Batch 2 config")
         with (run_dir / "predictions.jsonl").open("w", encoding="utf-8", newline="\n") as handle:
             for sample in dataset:
                 sample_started = time.perf_counter()
-                prediction = model.generate(sample["image"], sample["question"], context=None)
+                context, evidence = None, {}
+                question = sample["question"]
+                if config.dataset.name == "ravenea_cvqa":
+                    question = format_cvqa_question(sample)
+                    context, evidence = cvqa_context(sample["id"], config.rag.mode, corpus, cache)
+                prediction = model.generate(sample["image"], question, context=context)
                 record = {
                     "id": sample["id"],
                     "question": sample["question"],
@@ -63,19 +79,23 @@ def run_baseline(config_path: Path, repo_root: Path = REPO_ROOT) -> Path:
                     "inference_seconds": time.perf_counter() - sample_started,
                     "infrastructure_only": config.dataset.name == "smoke",
                 }
+                if config.dataset.name == "ravenea_cvqa":
+                    record = cvqa_prediction(sample, prediction, config.rag.mode, evidence)
+                    record["inference_seconds"] = time.perf_counter() - sample_started
                 handle.write(json.dumps(record, ensure_ascii=False, allow_nan=False) + "\n")
                 handle.flush()
                 completed += 1
         # Re-read the saved artifacts to score exactly what was serialized.
-        metrics = evaluate_predictions(read_jsonl(run_dir / "predictions.jsonl"),
-                                       config.evaluation.strip_punctuation)
+        records = read_jsonl(run_dir / "predictions.jsonl")
+        metrics = (evaluate_cvqa(records) if config.dataset.name == "ravenea_cvqa" else
+                   evaluate_predictions(records, config.evaluation.strip_punctuation))
         metrics.update({"status": "completed", "metric": config.evaluation.metric,
                         "infrastructure_only": config.dataset.name == "smoke"})
         if config.dataset.name == "smoke":
             metrics["notice"] = SMOKE_NOTICE
         write_json(run_dir / "metrics.json", metrics)
         metadata["status"] = "completed"
-        print(f"Samples: {completed}; normalized exact-match accuracy: {metrics['accuracy']:.3f}", flush=True)
+        print(f"Samples: {completed}; accuracy: {metrics['accuracy']:.3f}", flush=True)
     except BaseException as exc:
         metadata.update({"status": "failed", "error": f"{type(exc).__name__}: {exc}"})
         write_json(run_dir / "metrics.json", {

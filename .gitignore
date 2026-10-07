@@ -24,3 +24,5 @@ outputs/*
 data/*
 !data/README.md
 !data/smoke/
+
+/artifacts/

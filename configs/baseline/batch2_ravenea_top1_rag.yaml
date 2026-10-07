@@ -1,0 +1,42 @@
+# Batch 2 pilot results are not final paper results.
+dataset:
+  data_path: data/ravenea
+  limit: 50
+  manifest_path: data/ravenea_manifest.json
+  name: ravenea_cvqa
+  pilot_path: artifacts/ravenea/pilot_seed42_ids.json
+  sample_seed: 42
+  split: test
+evaluation:
+  metric: ravenea_cvqa_accuracy
+  strip_punctuation: false
+experiment:
+  name: batch2_ravenea_top1_rag
+  output_root: outputs/batch2/top1_rag
+  seed: 42
+model:
+  device: cuda
+  dtype: bfloat16
+  local_files_only: true
+  max_input_tokens: 4096
+  max_new_tokens: 2048
+  max_pixels: 1003520
+  min_pixels: 784
+  name: Qwen/Qwen2.5-VL-3B-Instruct
+  prompt_format: ravenea_cvqa
+  revision: 66285546d2b821cf421d4f5eb2576359d3770cd3
+  temperature: 0.0
+rag:
+  mode: top1
+  retrieval_path: artifacts/ravenea/retrieval/pilot_seed42_top10.jsonl
+retrieval:
+  name: jaagli/ravenea-clip-vit-large-patch14
+  revision: 890d85d3539a21fab2bb349d4874d5dfef5dd3ec
+  device: cuda
+  dtype: float32
+  batch_size: 32
+  top_k: 10
+  candidate_scope: official_enwiki_ids
+  query_modality: image
+  max_text_tokens: 77
+  local_files_only: true

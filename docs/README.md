@@ -1,9 +1,11 @@
 # Research notes
 
-Batch 1 validates the no-RAG infrastructure only. No paper results are present.
-For every future experiment batch, update the root README in the same coding task
-with exact GPU-server commands and the artifacts produced.
+`ravenea_semantics.md` records the exact official commit and actual released data
+inspected for Batch 2, prompt/parser/scoring behavior, retrieval scope, and deviations.
+Batch 1 is the no-RAG synthetic infrastructure smoke test. Batch 2 adds real cVQA
+No-RAG vs cached Top-1 candidate-pool RAG on one persisted 50-question pilot.
 
-Batch 2 can add a real cultural QA dataset adapter and its official evaluation.
-The existing VLM interface accepts optional context, but Batch 1 always supplies None.
-Retrieval, evidence selection/reranking, training, and paper tables are deferred.
+For every experiment batch, update the root README in the same coding task with
+exact GPU-server commands and actual verification/blockers. Pilot numbers are not
+paper results. Full baseline evaluation belongs to Batch 3; oracle utility, learned
+selection, fine-tuning, cIC and other benchmarks remain deferred.

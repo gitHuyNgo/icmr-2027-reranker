@@ -42,7 +42,9 @@ class HuggingFaceVLM:
         options = {"revision": config.revision, "local_files_only": config.local_files_only}
         # PIL image processing avoids qwen-vl-utils. Transformers still requires
         # torchvision to initialize the Qwen2.5-VL video processor, even for images.
-        self.processor = AutoProcessor.from_pretrained(config.name, use_fast=False, **options)
+        image_options = {key: getattr(config, key) for key in ("min_pixels", "max_pixels")
+                         if getattr(config, key) is not None}
+        self.processor = AutoProcessor.from_pretrained(config.name, use_fast=False, **image_options, **options)
         self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
             config.name,
             torch_dtype=getattr(torch, config.dtype),
@@ -56,9 +58,13 @@ class HuggingFaceVLM:
     def generate(self, image: Image.Image, question: str, context: str | None = None) -> str:
         import torch
 
+        prompt = build_prompt(question, context)
+        if self.config.prompt_format == "ravenea_cvqa":
+            from icmr2027.evaluation.ravenea import build_cvqa_prompt
+            prompt = build_cvqa_prompt(question, context)
         messages = [{"role": "user", "content": [
             {"type": "image"},
-            {"type": "text", "text": build_prompt(question, context)},
+            {"type": "text", "text": prompt},
         ]}]
         text = self.processor.apply_chat_template(
             messages, tokenize=False, add_generation_prompt=True
@@ -66,6 +72,10 @@ class HuggingFaceVLM:
         inputs = self.processor(
             text=[text], images=[image.convert("RGB")], return_tensors="pt", padding=True
         ).to(self.device)
+        if self.config.max_input_tokens is not None and (
+            inputs["input_ids"].shape[1] + self.config.max_new_tokens > self.config.max_input_tokens
+        ):
+            raise ValueError("Prompt plus generation budget exceeds max_input_tokens; no silent truncation")
         sampling = self.config.temperature > 0
         generation = {"max_new_tokens": self.config.max_new_tokens, "do_sample": sampling}
         if sampling:

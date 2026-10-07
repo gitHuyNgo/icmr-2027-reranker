@@ -1,4 +1,4 @@
-"""Normalized multimodal QA samples; add a real dataset adapter in Batch 2."""
+"""Normalized multimodal QA samples for smoke data and released RAVENEA cVQA."""
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from pathlib import Path
@@ -69,6 +69,10 @@ class SmokeDataset(MultimodalQADataset):
 
 
 def create_dataset(config: DatasetConfig, repo_root: Path) -> MultimodalQADataset:
+    if config.name == "ravenea_cvqa":
+        from icmr2027.datasets.ravenea import RaveneaCVQADataset
+        return RaveneaCVQADataset(resolve_path(config.data_path, repo_root), config.sample_seed,
+                                 config.limit, resolve_path(config.pilot_path, repo_root))
     if config.name != "smoke" or config.split != "smoke":
-        raise ValueError("Batch 1 provides only name=smoke, split=smoke; add real adapters in Batch 2")
+        raise ValueError("Choose Batch 1 name=smoke, split=smoke or Batch 2 name=ravenea_cvqa, split=test")
     return SmokeDataset(resolve_path(config.data_path, repo_root), config.limit)
