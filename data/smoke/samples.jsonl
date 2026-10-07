@@ -1,0 +1,3 @@
+{"id": "smoke_001", "image": "images/smoke_001.png", "question": "What color is the shape?", "answer": "red", "infrastructure_only": true}
+{"id": "smoke_002", "image": "images/smoke_002.png", "question": "What color is the shape?", "answer": "blue", "infrastructure_only": true}
+{"id": "smoke_003", "image": "images/smoke_003.png", "question": "What color is the shape?", "answer": "green", "infrastructure_only": true}

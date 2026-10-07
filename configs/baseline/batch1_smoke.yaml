@@ -1,0 +1,24 @@
+# Infrastructure-only synthetic smoke data. Never use these numbers in the paper.
+experiment:
+  name: batch1_smoke
+  seed: 42
+  output_root: outputs/batch1
+
+dataset:
+  name: smoke
+  data_path: data/smoke
+  split: smoke
+  limit: 3
+
+model:
+  name: Qwen/Qwen2.5-VL-3B-Instruct
+  revision: null
+  device: cuda
+  dtype: bfloat16
+  max_new_tokens: 64
+  temperature: 0.0
+  local_files_only: false
+
+evaluation:
+  metric: exact_match
+  strip_punctuation: true
