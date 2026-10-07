@@ -32,27 +32,31 @@ def parse_cvqa_answer(raw: str) -> str | None:
     return candidate if len(candidate) == 1 and candidate in "ABCD" else None
 
 
-def cvqa_correct(raw: str, ground_truth: str) -> bool:
+def cvqa_correct(raw: str, ground_truth: str, parser_version: str = "official") -> bool:
     # Released answers are A-D. Preserve the official ground-truth fallback semantics.
     match = re.search(r"^([A-D])(?:\)|\s|$)", ground_truth)
     label = match.group(1) if match else ground_truth.strip()
-    return parse_cvqa_answer(raw) == label
+    from icmr2027.evaluation.option_parser import answer_parser
+    return answer_parser(parser_version)(raw) == label
 
 
-def evaluate_cvqa(records: list[dict]) -> dict:
+def evaluate_cvqa(records: list[dict], parser_version: str = "official") -> dict:
+    from icmr2027.evaluation.option_parser import answer_parser
+    parse = answer_parser(parser_version)
     correct = malformed = 0
     countries = defaultdict(lambda: {"correct": 0, "num_samples": 0})
     for record in records:
         raw = record["raw_prediction"]
-        ok = cvqa_correct(raw, record["ground_truth"])
+        ok = cvqa_correct(raw, record["ground_truth"], parser_version)
         correct += ok
-        malformed += parse_cvqa_answer(raw) is None
+        malformed += parse(raw) is None
         if "country" in record:
             countries[record["country"]]["correct"] += ok
             countries[record["country"]]["num_samples"] += 1
     for stats in countries.values():
         stats["accuracy"] = stats["correct"] / stats["num_samples"]
     return {"num_samples": len(records), "accuracy": correct / len(records) if records else 0.0,
-            "num_malformed": malformed, "dataset": "ravenea_cvqa", "metric": "ravenea_cvqa_accuracy",
+            "num_malformed": malformed, "malformed_rate": malformed / len(records) if records else 0.0,
+            "answer_parser_version": parser_version, "dataset": "ravenea_cvqa", "metric": "ravenea_cvqa_accuracy",
             "by_country": dict(countries), "pilot_only": True,
             "notice": "Batch 2 pilot results are not final paper results."}

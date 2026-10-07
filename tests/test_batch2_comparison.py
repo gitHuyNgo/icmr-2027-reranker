@@ -41,3 +41,20 @@ def test_changed_question_or_tampered_correctness_fail():
     right[0]["question"] = "Changed question"
     with pytest.raises(ValueError, match="content differs"):
         pair_predictions(left, right)
+
+
+@pytest.mark.parametrize("left_raw,right_raw,correction,corruption", [
+    ("A", "B", 0.0, 1.0), ("B", "A", 1.0, 0.0), ("A", "A", 0.0, 0.0)])
+def test_transition_rates_and_zero_denominators(left_raw, right_raw, correction, corruption):
+    summary, _ = pair_predictions([record("one", left_raw, "none")], [record("one", right_raw, "top1")])
+    assert summary["correction_rate"] == correction
+    assert summary["corruption_rate"] == corruption
+    assert summary["correct_to_correct"] == summary["unchanged_correct"]
+    assert summary["wrong_to_wrong"] == summary["unchanged_wrong"]
+
+
+def test_mixed_parser_versions_are_rejected():
+    right = record("one", "A", "top1")
+    right["answer_parser_version"] = "conservative_v1"
+    with pytest.raises(ValueError, match="parser version"):
+        pair_predictions([record("one", "A", "none")], [right])

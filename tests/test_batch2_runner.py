@@ -140,3 +140,75 @@ def test_offline_retrieval_builder_caches_by_image_and_reuses_checked_results(pa
         handle.write("\n")
     with pytest.raises(ValueError, match="checksum"):
         build.build_retrieval(config, ROOT, validate_only=True)
+
+
+def test_audit_reparse_preserves_raws_ids_and_retrieval_and_rejects_mutation(paired_setup, monkeypatch):
+    from icmr2027.evaluation.format_audit import audit_pair, load_original_pair
+    from icmr2027.evaluation.reparse import reparse_pair
+    paths, output = paired_setup
+
+    class FormatTestStub:
+        def __init__(self, config):
+            self.resolved_revision = config.revision
+        def generate(self, image, question, context=None):
+            return "A" if context is None else "A. explicit label"
+
+    monkeypatch.setattr(runner, "HuggingFaceVLM", FormatTestStub)
+    runs = [runner.run_baseline(path, ROOT) for path in paths]
+    # Fixture configs use absolute paths; the production command always requires 50.
+    bundle = load_original_pair(output, runs, expected_samples=3)
+    audit_root = output / "batch2_1"
+    with pytest.raises(FileNotFoundError):
+        reparse_pair(bundle, audit_root)
+    audit = audit_pair(bundle, audit_root / "audit")
+    cases = read_jsonl(audit_root / "audit/malformed_cases.jsonl")
+    assert len(cases) == 3
+    assert audit["classification_counts"] == {"parser_failure": 3}
+    assert all(case["retrieved_document_preview"] and case["context_chars"] > 0 for case in cases)
+    assert audit_pair(bundle, audit_root / "audit") == audit
+    report = reparse_pair(bundle, audit_root)
+    assert report["after"]["top1_rag_num_malformed"] == 0
+    assert report["before"]["top1_rag_num_malformed"] == 3
+    transitions = read_jsonl(audit_root / "comparison/per_sample_transitions.jsonl")
+    assert len(transitions) == 3
+    assert all(row["old_no_rag_raw"] == row["new_no_rag_raw"] and row["old_rag_raw"] == row["new_rag_raw"]
+               for row in transitions)
+    for name, digest in bundle["hashes"].items():
+        assert file_sha256(output / name) == digest
+    assert reparse_pair(bundle, audit_root) == report  # Idempotent, no overwrites.
+    comparison = compare_runs(audit_root / "reparse/no_rag", audit_root / "reparse/top1_rag", output / "corrected_comparison")
+    assert json.loads((comparison / "summary.json").read_text())["answer_parser_version"] == "conservative_v1"
+    # Cache mutation is rejected before any inference or new artifacts.
+    cache_path = Path(load_config(paths[1]).rag.retrieval_path)
+    with cache_path.open("a") as handle:
+        handle.write("\n")
+    with pytest.raises(ValueError, match="checksum"):
+        load_original_pair(output, runs, expected_samples=3)
+
+
+def test_audit_artifacts_refuse_overwrite(tmp_path):
+    from icmr2027.evaluation.format_audit import save_artifacts
+    save_artifacts(tmp_path, {"a.json": "one"})
+    with pytest.raises(FileExistsError, match="overwrite"):
+        save_artifacts(tmp_path, {"a.json": "two", "new.json": "new"})
+    assert not (tmp_path / "new.json").exists()
+
+
+def test_reparse_rejects_forged_or_incomplete_audit(paired_setup, monkeypatch):
+    from icmr2027.evaluation.format_audit import audit_pair, load_original_pair
+    from icmr2027.evaluation.reparse import reparse_pair
+    paths, output = paired_setup
+    class FormatTestStub:
+        def __init__(self, config): self.resolved_revision = config.revision
+        def generate(self, image, question, context=None): return "A. explicit label"
+    monkeypatch.setattr(runner, "HuggingFaceVLM", FormatTestStub)
+    runs = [runner.run_baseline(path, ROOT) for path in paths]
+    bundle = load_original_pair(output, runs, expected_samples=3)
+    audit_root = output / "batch2_1"
+    audit_pair(bundle, audit_root / "audit")
+    cases_path = audit_root / "audit/malformed_cases.jsonl"
+    cases = read_jsonl(cases_path)
+    write_jsonl(cases_path, cases[:-1])
+    with pytest.raises(ValueError, match="every original"):
+        reparse_pair(bundle, audit_root)
+    assert not (audit_root / "reparse").exists()

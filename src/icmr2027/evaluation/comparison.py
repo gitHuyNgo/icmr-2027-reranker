@@ -2,11 +2,13 @@
 import json
 from pathlib import Path
 
-from icmr2027.evaluation.ravenea import cvqa_correct, parse_cvqa_answer
+from icmr2027.evaluation.ravenea import cvqa_correct
+from icmr2027.evaluation.option_parser import answer_parser
 from icmr2027.utils.io import create_run_directory, read_jsonl, write_json, write_jsonl
 
 
-def pair_predictions(no_rag: list[dict], top1: list[dict]) -> tuple[dict, list[dict]]:
+def pair_predictions(no_rag: list[dict], top1: list[dict], parser_version: str = "official") -> tuple[dict, list[dict]]:
+    parse = answer_parser(parser_version)
     def index(records):
         result = {record["id"]: record for record in records}
         if len(result) != len(records) or not records:
@@ -28,16 +30,18 @@ def pair_predictions(no_rag: list[dict], top1: list[dict]) -> tuple[dict, list[d
         if not b.get("retrieved_doc_id") or b.get("retrieval_rank") != 1:
             raise ValueError("Top-1 prediction is missing retrieved document identity")
         for record in (a, b):
-            if record.get("parsed_prediction") != parse_cvqa_answer(record["raw_prediction"]):
+            if record.get("answer_parser_version", "official") != parser_version:
+                raise ValueError("Prediction parser version differs from comparison scorer")
+            if record.get("parsed_prediction") != parse(record["raw_prediction"]):
                 raise ValueError("Stored parsed prediction does not match raw model output")
-        a_ok = cvqa_correct(a["raw_prediction"], a["ground_truth"])
-        b_ok = cvqa_correct(b["raw_prediction"], b["ground_truth"])
+        a_ok = cvqa_correct(a["raw_prediction"], a["ground_truth"], parser_version)
+        b_ok = cvqa_correct(b["raw_prediction"], b["ground_truth"], parser_version)
         if a.get("correct") != a_ok or b.get("correct") != b_ok:
-            raise ValueError("Stored correctness does not match official-style scoring")
+            raise ValueError("Stored correctness does not match versioned scoring")
         transition = ("correct" if a_ok else "wrong") + "_to_" + ("correct" if b_ok else "wrong")
         counts[transition] += 1
-        left_malformed += parse_cvqa_answer(a["raw_prediction"]) is None
-        right_malformed += parse_cvqa_answer(b["raw_prediction"]) is None
+        left_malformed += parse(a["raw_prediction"]) is None
+        right_malformed += parse(b["raw_prediction"]) is None
         comparisons.append({"sample_id": identifier, "no_rag_correct": a_ok,
                             "top1_rag_correct": b_ok, "transition": transition,
                             "retrieved_doc_id": b["retrieved_doc_id"]})
@@ -47,6 +51,13 @@ def pair_predictions(no_rag: list[dict], top1: list[dict]) -> tuple[dict, list[d
     summary = {"num_samples": total, "no_rag_accuracy": left_accuracy,
                "top1_rag_accuracy": right_accuracy, "delta_accuracy": right_accuracy - left_accuracy,
                "wrong_to_correct": counts["wrong_to_correct"], "correct_to_wrong": counts["correct_to_wrong"],
+               "correct_to_correct": counts["correct_to_correct"], "wrong_to_wrong": counts["wrong_to_wrong"],
+               "correction_rate": counts["wrong_to_correct"] / (counts["wrong_to_correct"] + counts["wrong_to_wrong"])
+                   if counts["wrong_to_correct"] + counts["wrong_to_wrong"] else 0.0,
+               "corruption_rate": counts["correct_to_wrong"] / (counts["correct_to_wrong"] + counts["correct_to_correct"])
+                   if counts["correct_to_wrong"] + counts["correct_to_correct"] else 0.0,
+               "answer_parser_version": parser_version,
+               "no_rag_malformed_rate": left_malformed / total, "top1_rag_malformed_rate": right_malformed / total,
                "unchanged_correct": counts["correct_to_correct"], "unchanged_wrong": counts["wrong_to_wrong"],
                "no_rag_num_malformed": left_malformed, "top1_rag_num_malformed": right_malformed,
                "pilot_only": True, "notice": "Batch 2 pilot results are not final paper results."}
@@ -66,7 +77,10 @@ def compare_runs(no_rag_run: Path, top1_run: Path, output_root: Path) -> Path:
     for rows, meta in zip(records, metas):
         if set(row["id"] for row in rows) != set(meta["sample_ids"]):
             raise ValueError("Prediction IDs do not match the persisted pilot IDs")
-    summary, comparisons = pair_predictions(*records)
+    versions = [meta.get("answer_parser_version", "official") for meta in metas]
+    if versions[0] != versions[1]:
+        raise ValueError("Paired answer parser versions differ")
+    summary, comparisons = pair_predictions(*records, parser_version=versions[0])
     output = create_run_directory(output_root)
     write_json(output / "summary.json", summary)
     write_jsonl(output / "comparisons.jsonl", comparisons)

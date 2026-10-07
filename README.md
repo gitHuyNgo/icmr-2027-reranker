@@ -591,6 +591,121 @@ No-RAG/Top-1 generation, measured accuracies/malformed counts, and real paired
 comparison remain unverified. No real Batch 2 experiment output was fabricated.
 Run the server commands above to complete the GPU pilot.
 
+### Batch 2.1 — cVQA Output-Format Audit
+
+The completed GPU pilot reported 1/50 malformed No-RAG answers (2%) and 6/50
+malformed Top-1 RAG answers (12%). Batch 2.1 audits evaluation validity only;
+it does not implement utility labels, oracle evaluation, reranking or training.
+The actual original GPU run directories are:
+
+```text
+/root/ICMR/icmr-2027/outputs/batch2/no_rag/20261007T103955703635Z_1fbc3d8a
+/root/ICMR/icmr-2027/outputs/batch2/top1_rag/20261007T104052504178Z_46a95bae
+```
+
+All seven malformed responses use an explicit `LETTER. option text` format.
+All seven classify as `parser_failure`; none is verbose, ambiguous, unrecoverable,
+or evidence of a prompt/context construction failure. The No-RAG output is
+`B. 1`, which remains incorrect after parsing. The six RAG outputs are explicit
+`D. ...` answers. The audit and classification rules do not consult ground truth.
+See [the complete seven-case report](docs/batch2_1_report.md).
+
+The pinned official source was re-downloaded and byte-compared to our inspected
+copy before changing scoring. Its case-sensitive first `Answer: [A-D]` match and
+leading `A)` fallback miss `A. text`, lowercase and bracketed labels; its prefix
+regex also accepts `Answer: APPLE` and takes the first of conflicting answers.
+`parse_cvqa_answer`, default experiment scoring, and original artifacts preserve
+those exact official semantics. **`conservative_v1` is an explicitly versioned
+supplemental format normalization, not identical official-regex scoring.** Both
+before/official and after/normalized scores remain available. Do not report the
+after numbers as exact official-implementation results.
+
+The conservative parser recognizes bare letters in either case, `(A)`, `[A]`,
+`Answer: A`, `Answer: (A)`, `The answer is A.`, `The correct answer is A.`,
+`Option A`, `A.`, and leading `A. option text` / `A) option text`. It requires an
+explicit commitment to exactly one valid A-D label, uses full-token boundaries,
+and rejects competing labels, uncertainty and explicit negation. It never matches
+option meanings or letters inside words. Lowercase article `a` in an explanation
+is not treated as a competing option; explicit lowercase option labels are handled.
+Unknown output forms remain malformed. This can lower scores for outputs the
+official permissive regex accepted.
+
+**Prompt changes: none. Inference reruns: none. Retrieval reruns: none.** The
+original prompt has its answer instruction before the evidence rather than
+repeating it at the end. Its document/question/options separators are intact;
+only prepared document text is inserted, with no metadata fields. Official
+heading removal and the 256-word sentence rule remain unchanged. The Qwen adapter
+fails on token-budget overflow rather than silently truncating question/options.
+All 50 RAG `context_chars` values are reconstructed and verified against the
+historical predictions, with prompt/context checks saved for every sample. These
+findings support a parser-only fix; they do not establish that evidence length
+caused the differing output frequencies.
+
+Exact GPU-server commands (use the existing environment; no installation needed):
+
+```bash
+cd /root/ICMR/icmr-2027
+source .venv/bin/activate
+python scripts/audit_batch2_malformed.py \
+  --no-rag-run outputs/batch2/no_rag/20261007T103955703635Z_1fbc3d8a \
+  --top1-rag-run outputs/batch2/top1_rag/20261007T104052504178Z_46a95bae
+python scripts/reparse_batch2.py
+python scripts/compare_batch2.py \
+  --no-rag-run outputs/batch2_1/reparse/no_rag \
+  --top1-rag-run outputs/batch2_1/reparse/top1_rag \
+  --output-root outputs/batch2_1/comparison
+pytest -q
+```
+
+The audit must run first. It requires the existing 50-ID pilot and validates both
+saved configs, completed run metadata, original metrics/raw predictions, dataset
+and image fingerprints, pinned model revision, cache checksum and each Top-1
+join/rank/score/context length. It does not instantiate a dataset that could
+resample or load a model. Reparse resolves the exact audited runs, validates all
+source hashes again, and rejects an incomplete or changed audit. Repeated audit
+and reparse commands reuse identical artifacts; conflicting output files are
+rejected. Comparison creates a new timestamped directory as in Batch 2.
+
+Generated artifacts under `outputs/batch2_1/`:
+
+- `audit/malformed_cases.jsonl` and `.csv`: all seven cases, original raw outputs,
+  diagnostic categories and first 400 characters of RAG evidence.
+- `audit/context_checks.jsonl` and `.csv`: all 50 effective contexts and prompt checks.
+- `audit/audit_meta.json`: exact original run paths, IDs and source file SHA-256 hashes.
+- `reparse/no_rag_metrics.json`, `top1_rag_metrics.json`, `comparison.json`:
+  parser-only metrics, with raw predictions reused unchanged.
+- `reparse/no_rag/` and `reparse/top1_rag/`: versioned prediction/metadata/config
+  artifacts accepted by the existing comparison command.
+- `verification.json`: local/server test outcomes and final source-integrity checks.
+- `comparison/before_after.json`: actual official-before and normalized-after
+  metrics and provenance.
+- `comparison/per_sample_transitions.jsonl` and `.csv`: all 50 original/new raw
+  outputs, parsed labels, correctness and fixed retrieved document IDs/scores.
+
+| Pilot metric | Before: official | After: conservative_v1 |
+|---|---:|---:|
+| No-RAG accuracy | 70% | 70% |
+| Top-1 RAG accuracy | 66% | 78% |
+| RAG minus No-RAG | -4 percentage points | +8 percentage points |
+| No-RAG malformed | 1 / 50 (2%) | 0 / 50 (0%) |
+| RAG malformed | 6 / 50 (12%) | 0 / 50 (0%) |
+| Wrong to correct | 6 | 6 |
+| Correct to wrong | 8 | 2 |
+| Correct to correct | 27 | 33 |
+| Wrong to wrong | 9 | 9 |
+| Correction rate | 6 / 15 = 40% | 6 / 15 = 40% |
+| Corruption rate | 8 / 35 = 22.86% | 2 / 35 = 5.71% |
+
+Every future cVQA metric includes `num_malformed` and `malformed_rate`.
+Comparisons include canonical transition names, correction/corruption rates, and
+legacy `unchanged_correct` / `unchanged_wrong` aliases. A zero denominator yields
+0.0. Both conditions use the same parser version; mixed versions are rejected.
+
+All 146 tests pass locally and on the GPU server, including the previous 83. The exact 50 IDs, original
+raw predictions, retrieval file/documents/scores, VLM checkpoint/revision and
+generation parameters are unchanged. These are **pilot evaluation-validity
+results, not paper results**. No research-hypothesis interpretation is made.
+
 ## Prompt and extension points
 
 Every Batch 1 prediction passes `context=None` and uses:

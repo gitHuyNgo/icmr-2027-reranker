@@ -114,3 +114,20 @@ document contexts, 418 No-RAG/RAG prompt strings, and 3,135 parser/correctness e
 checks. These checks concern functions and representations; they are not model
 inference or pilot accuracy measurements. The persisted seed-42 pilot contains
 50 questions using 41 unique images. All 83 offline CPU tests passed.
+
+## Batch 2.1 supplemental output normalization
+
+The original parser and prompt remain the exact official-compatible defaults.
+After auditing all seven malformed historical responses before any parser change,
+a separate `conservative_v1` parser normalizes explicit single-option formats.
+It accepts case variations, brackets and leading `A. option text`, while rejecting
+conflicting labels, uncertainty, negation and letters inside words. It receives
+only raw text, never questions/options/truths. This preserves the task's single
+A-D answer meaning but differs from official regex scoring: it can both recover
+format variants and reject permissive official matches. Report its scores as
+normalized supplemental evaluation with exact official-before scores retained.
+
+No prompt/inference/retrieval rerun occurred. Model, revision, generation, all
+50 pilot IDs and source artifact hashes stay fixed. Audit evidence placement and
+all 50 effective context lengths are persisted. See `batch2_1_report.md` and the
+Batch 2.1 README commands for the seven-case classification and paired results.
