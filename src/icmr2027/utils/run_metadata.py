@@ -37,6 +37,7 @@ def collect_run_metadata(repo_root: Path, seed: int, model_name: str, device: st
         "hostname": socket.gethostname(),
         "python_version": platform.python_version(),
         "torch_version": package_version("torch"),
+        "torchvision_version": package_version("torchvision"),
         "transformers_version": package_version("transformers"),
         "cuda_available": None,
         "cuda_version": None,

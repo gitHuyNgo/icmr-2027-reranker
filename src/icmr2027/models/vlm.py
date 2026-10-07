@@ -40,7 +40,8 @@ class HuggingFaceVLM:
                     if not torch.cuda.is_bf16_supported():
                         raise RuntimeError("This GPU does not support bfloat16; set model.dtype: float16")
         options = {"revision": config.revision, "local_files_only": config.local_files_only}
-        # PIL processing avoids adding qwen-vl-utils or a video dependency stack.
+        # PIL image processing avoids qwen-vl-utils. Transformers still requires
+        # torchvision to initialize the Qwen2.5-VL video processor, even for images.
         self.processor = AutoProcessor.from_pretrained(config.name, use_fast=False, **options)
         self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
             config.name,

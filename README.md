@@ -64,10 +64,11 @@ source .venv/bin/activate
 python -m pip install --upgrade pip
 ```
 
-Before installing requirements, select and execute the CUDA-enabled PyTorch pip
-command from the [official PyTorch installation selector](https://pytorch.org/get-started/locally/)
+Before installing requirements, select and execute the matching CUDA-enabled
+PyTorch and Torchvision pip command from the [official PyTorch installation selector](https://pytorch.org/get-started/locally/)
 for your server's OS and supported CUDA build. The NVIDIA driver must support that
-build; requirements intentionally do not choose a CUDA wheel index. Then:
+build; requirements intentionally do not choose a CUDA wheel index. Install Torch
+and Torchvision together from that index so their compiled operators are compatible. Then:
 
 ```bash
 python -m pip install -r requirements.txt
@@ -153,8 +154,12 @@ The default is [Qwen/Qwen2.5-VL-3B-Instruct](https://huggingface.co/Qwen/Qwen2.5
 a relatively small 3B image/text instruct checkpoint. Its
 [Transformers inference support](https://huggingface.co/docs/transformers/model_doc/qwen2_5_vl)
 keeps this smoke pipeline simple. Requirements use `transformers>=4.51,<5` to stay
-on the stable 4.x API supporting the implemented Qwen2.5-VL adapter. No video
-helpers or FlashAttention installation are needed.
+on the stable 4.x API supporting the implemented Qwen2.5-VL adapter. Torchvision is
+required: the processor initializes `AutoVideoProcessor` even when only images are
+used ([processor source](https://github.com/huggingface/transformers/blob/v4.57.1/src/transformers/models/qwen2_5_vl/processing_qwen2_5_vl.py)).
+`use_fast=False` selects the image-processing implementation; it does not remove
+this dependency. No qwen-vl-utils, video decoder extras, or FlashAttention installation
+are needed for this image-only pipeline.
 
 Edit the YAML to change the checkpoint ID or local checkpoint directory, revision,
 device, dtype, generation limit, temperature, dataset limit, or output root.
@@ -227,6 +232,14 @@ successful invocation.
   PyTorch build via the official selector. The runner and launcher stop on this condition.
 - **Missing Python modules:** activate `.venv` and install `requirements.txt`; the minimal
   CPU-only test environment is insufficient for inference.
+- **`AutoVideoProcessor requires the Torchvision library`:** Torchvision was missing
+  from the initial requirements. Install the updated requirements with a matching
+  Torch/Torchvision CUDA pair. For the reported server with `torch==2.14.1+cu130`,
+  use the repair commands below. `use_fast=False` does not bypass video processor
+  initialization, even though Batch 1 supplies no video.
+- **Torchvision import errors such as `operator torchvision::nms does not exist`:**
+  check that Torch and Torchvision use compatible versions and the same CUDA wheel
+  index; reinstall the matching pair using the official PyTorch selector.
 - **Insufficient VRAM:** free GPU memory, reduce `max_new_tokens`, or use another
   smaller compatible checkpoint. There is no quantization or multi-GPU fallback.
 - **BF16 unsupported:** change `model.dtype` to `float16` in the YAML.
@@ -240,6 +253,34 @@ successful invocation.
   to a cache outside the repository.
 - **Missing/corrupt smoke files:** run `python scripts/generate_smoke_data.py` and
   rerun tests. The adapter checks manifest fields, unique IDs, and local image paths.
+
+
+### Repair the reported CUDA 13.0 environment
+
+The user-reported GPU run on 2026-10-07 passed CUDA preflight on an RTX 3090
+with `torch==2.14.1+cu130`, then failed while loading the processor because
+Torchvision was absent. Its failed run directory was
+`outputs/batch1/20261007T095033768636Z_1014aba7/`; inference did not complete.
+
+After copying the updated repository files to that server, run:
+
+```bash
+cd /root/ICMR/icmr-2027
+source .venv/bin/activate
+python -m pip install "torch==2.14.1+cu130" torchvision --index-url https://download.pytorch.org/whl/cu130
+python -m pip install -r requirements.txt
+python -m pip check
+python -c "import torch, torchvision; from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration; print('torch:', torch.__version__); print('torchvision:', torchvision.__version__); print('CUDA:', torch.cuda.is_available())"
+pytest -q
+bash scripts/run_batch1_smoke.sh
+```
+
+The Torch constraint keeps the installed build while pip selects a compatible
+Torchvision release. The wheel index follows the installed `+cu130` build,
+not the maximum CUDA version printed by `nvidia-smi`. Other servers should use
+the matching pair/index from the official installation selector. Each retry
+allocates a new directory; the failed run remains intact. These repair commands
+have not been executed on the remote server by this agent.
 
 ## Prompt and extension points
 
